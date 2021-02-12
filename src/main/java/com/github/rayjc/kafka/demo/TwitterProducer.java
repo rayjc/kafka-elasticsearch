@@ -37,7 +37,7 @@ public class TwitterProducer {
     }
 
     public static void main(String[] args) {
-        new TwitterProducer(Lists.newArrayList("final fantasy", "kingdom hearts")).run();
+        new TwitterProducer(Lists.newArrayList("final fantasy", "kingdom hearts", "ps5", "xbox")).run();
     }
 
     public void run() {
@@ -94,6 +94,25 @@ public class TwitterProducer {
         properties.setProperty(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
         properties.setProperty(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
         properties.setProperty(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+        // Advance settings
+        // default acks=1,  or set acks=all (require acks from replica) with eg. replication=3, min.insync=2
+        // default retries=MAX_INT, retry.backoff.ms=100, delivery.timeout.ms=120_000 (2 mins)
+        //   could be out of order with default max.in.flight.request.per.connection=5
+        //   If this is an issue, consider creating an idempotent producer
+        // Consider compression={snappy,lz4,gzip} under production (smart batching already by default)
+        //   manually increase batch size by eg. linger.ms=5 to increase chance of batching (default of 0)
+        //   or batch.size
+
+        // safe producer config
+        properties.setProperty(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, "true");
+        properties.setProperty(ProducerConfig.ACKS_CONFIG, "all");
+        properties.setProperty(ProducerConfig.RETRIES_CONFIG, Integer.toString(Integer.MAX_VALUE));
+        properties.setProperty(ProducerConfig.MAX_IN_FLIGHT_REQUESTS_PER_CONNECTION, "5");
+
+        // high throughput config (at the cost of latency and CPU)
+        properties.setProperty(ProducerConfig.COMPRESSION_TYPE_CONFIG, "snappy");
+        properties.setProperty(ProducerConfig.LINGER_MS_CONFIG, "20");
+        properties.setProperty(ProducerConfig.BATCH_SIZE_CONFIG, Integer.toString(32 * 1024));
 
         // create producer
         return new KafkaProducer<String, String>(properties);
@@ -103,8 +122,8 @@ public class TwitterProducer {
         /** Declare the host you want to connect to, the endpoint, and authentication (basic auth or oauth) */
         Hosts hosebirdHosts = new HttpHosts(Constants.STREAM_HOST);
         StatusesFilterEndpoint hosebirdEndpoint = new StatusesFilterEndpoint();
-        // Optional: set up some followings and track terms
 
+        // Optional: set up some followings and track terms
         hosebirdEndpoint.trackTerms(terms);
 
         // These secrets should be read from a config file
