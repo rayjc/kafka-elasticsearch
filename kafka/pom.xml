@@ -10,6 +10,7 @@
     <version>1.0</version>
     <modules>
         <module>kafka-producer-twitter</module>
+        <module>kafka-consumer-elasticsearch</module>
     </modules>
 
     <properties>
