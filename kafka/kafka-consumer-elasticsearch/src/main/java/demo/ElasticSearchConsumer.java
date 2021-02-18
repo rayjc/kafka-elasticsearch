@@ -7,6 +7,8 @@ import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.serialization.StringDeserializer;
+import org.elasticsearch.action.bulk.BulkRequest;
+import org.elasticsearch.action.bulk.BulkResponse;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.index.IndexResponse;
 import org.elasticsearch.client.RequestOptions;
@@ -44,6 +46,9 @@ public class ElasticSearchConsumer {
         properties.setProperty(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         properties.setProperty(ConsumerConfig.GROUP_ID_CONFIG, groupId);
         properties.setProperty(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        // force offsets to be committed at least once
+        properties.setProperty(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
+        properties.setProperty(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, "10");
 
         // create consumer
         KafkaConsumer<String, String> consumer = new KafkaConsumer<String, String>(properties);
@@ -67,27 +72,45 @@ public class ElasticSearchConsumer {
         while (true) {
             ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(100));
 
+            Integer recordCount = records.count();
+            logger.info("Received " + records.count() + " records");
+
+            BulkRequest bulkRequest = new BulkRequest();
+
             for (ConsumerRecord<String, String> record: records) {
-                logger.info("Key: " + record.key() + ", Value: " + record.value());
-                logger.info("Partition: " + record.partition() + ", Offset: " + record.offset());
+                // logger.info("Key: " + record.key() + ", Value: " + record.value());
+                // logger.info("Partition: " + record.partition() + ", Offset: " + record.offset());
 
                 // kafka generic id
                 // String id = record.topic() + "_" + record.partition() + "_" + record.offset();
-                // twitter feed id
-                String id = getIdFromTweet(record.value());
 
+                try {
+                    // twitter feed id
+                    String id = getIdFromTweet(record.value());
 
-                // send data to elasticsearch
-                // make sure index exists otherwise a new index will be created
-                // Note: Offsets are committed at least once (not at most) by default,
-                //      need to make sure duplicates are not being created by replicas.
-                //      Index with id to make request idempotent, use either kafka or twitter id
-                IndexRequest indexRequest = new IndexRequest("twitter", "tweets", id)
-                        .source(record.value(), XContentType.JSON);
+                    // send data to elasticsearch
+                    // make sure index exists otherwise a new index will be created
+                    // Note: Offsets are committed at least once, committed after processing (not at most)
+                    //      by default need to make sure duplicates are not being created during fail over.
+                    //      Index with id to make request idempotent, use either kafka or twitter id
+                    IndexRequest indexRequest = new IndexRequest("twitter", "tweets", id)
+                            .source(record.value(), XContentType.JSON);
+                    // IndexResponse indexResponse = client.index(indexRequest, RequestOptions.DEFAULT);
 
-                IndexResponse indexResponse = client.index(indexRequest, RequestOptions.DEFAULT);
+                    // accumulate requests
+                    bulkRequest.add(indexRequest);
+                } catch (NullPointerException e) {
+                    logger.warn("Skip inserting corrupted data: " + record.value());
+                }
+            }
 
-                logger.info(indexResponse.getId());
+            if (recordCount > 0) {
+                // bulk index to elasticsearch
+                BulkResponse bulkItemResponses = client.bulk(bulkRequest, RequestOptions.DEFAULT);
+
+                logger.info("Committing offsets...");
+                consumer.commitSync();
+                logger.info("Offsets committed.");
 
                 try {
                     Thread.sleep(1000);
