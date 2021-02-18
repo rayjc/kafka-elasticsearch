@@ -1,5 +1,6 @@
 package demo;
 
+import com.google.gson.JsonParser;
 import org.apache.http.HttpHost;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -70,9 +71,18 @@ public class ElasticSearchConsumer {
                 logger.info("Key: " + record.key() + ", Value: " + record.value());
                 logger.info("Partition: " + record.partition() + ", Offset: " + record.offset());
 
+                // kafka generic id
+                // String id = record.topic() + "_" + record.partition() + "_" + record.offset();
+                // twitter feed id
+                String id = getIdFromTweet(record.value());
+
+
                 // send data to elasticsearch
                 // make sure index exists otherwise a new index will be created
-                IndexRequest indexRequest = new IndexRequest("twitter", "tweets")
+                // Note: Offsets are committed at least once (not at most) by default,
+                //      need to make sure duplicates are not being created by replicas.
+                //      Index with id to make request idempotent, use either kafka or twitter id
+                IndexRequest indexRequest = new IndexRequest("twitter", "tweets", id)
                         .source(record.value(), XContentType.JSON);
 
                 IndexResponse indexResponse = client.index(indexRequest, RequestOptions.DEFAULT);
@@ -89,5 +99,13 @@ public class ElasticSearchConsumer {
 
         // client.close();
 
+    }
+
+    private static String getIdFromTweet(String tweetJson) {
+        return JsonParser
+                .parseString(tweetJson)
+                .getAsJsonObject()
+                .get("id_str")
+                .getAsString();
     }
 }
